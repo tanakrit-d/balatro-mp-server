@@ -1,0 +1,15 @@
+services:
+  balatro-multiplayer:
+    image: ghcr.io/tanakrit-d/balatro-multiplayer-server:latest
+    container_name: balatro-multiplayer
+
+    restart: unless-stopped
+
+    ports:
+      - "8788:8788/tcp"
+
+    volumes:
+      - ./data:/data
+
+    security_opt:
+      - no-new-privileges:true

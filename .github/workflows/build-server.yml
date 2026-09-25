@@ -1,0 +1,147 @@
+name: Build Balatro Multiplayer Server
+
+on:
+    workflow_dispatch:
+        inputs:
+            force:
+                description: Force rebuild
+                type: boolean
+                default: false
+
+    schedule:
+        - cron: "0 0 * * *"
+
+permissions:
+    contents: read
+    packages: write
+
+env:
+    UPSTREAM_REPO: Balatro-Multiplayer/BalatroMultiplayer
+    IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/balatro-multiplayer-server
+
+jobs:
+    check-new-release:
+        runs-on: ubuntu-latest
+
+        outputs:
+            should_build: ${{ steps.check.outputs.should_build }}
+            release_tag: ${{ steps.release.outputs.release_tag }}
+            asset_url: ${{ steps.release.outputs.asset_url }}
+
+        steps:
+            - name: Fetch latest upstream release
+              id: release
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              shell: bash
+              run: |
+                  RESPONSE=$(curl -fsSL \
+                    -H "Authorization: Bearer $GH_TOKEN" \
+                    -H "Accept: application/vnd.github+json" \
+                    "https://api.github.com/repos/${UPSTREAM_REPO}/releases/latest")
+
+                  RELEASE_TAG=$(jq -r '.tag_name // empty' <<< "$RESPONSE")
+
+                  ASSET_URL=$(jq -r '
+                    (.assets // [])
+                    | .[]
+                    | select(.name == "server-linux")
+                    | .browser_download_url
+                  ' <<< "$RESPONSE" | head -n 1)
+
+                  if [[ -z "$RELEASE_TAG" ]]; then
+                    echo "Error: upstream release did not contain a tag."
+                    exit 1
+                  fi
+
+                  if [[ -z "$ASSET_URL" ]]; then
+                    echo "Error: server-linux asset not found."
+                    echo "Available assets:"
+                    jq -r '(.assets // [])[]?.name' <<< "$RESPONSE"
+                    exit 1
+                  fi
+
+                  echo "Upstream version: $RELEASE_TAG"
+                  echo "Server asset: $ASSET_URL"
+
+                  echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+                  echo "asset_url=$ASSET_URL" >> "$GITHUB_OUTPUT"
+
+            - name: Log in to GHCR
+              uses: docker/login-action@v3
+              with:
+                  registry: ghcr.io
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Check whether release was already built
+              id: check
+              env:
+                  IMAGE_NAME: ${{ env.IMAGE_NAME }}
+                  RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
+                  FORCE: ${{ inputs.force || 'false' }}
+              shell: bash
+              run: |
+                  if [[ "$FORCE" == "true" ]]; then
+                    echo "Force rebuild requested."
+                    echo "should_build=true" >> "$GITHUB_OUTPUT"
+                    exit 0
+                  fi
+
+                  IMAGE="${IMAGE_NAME,,}:${RELEASE_TAG}"
+
+                  if docker buildx imagetools inspect "$IMAGE" >/dev/null 2>&1; then
+                    echo "$IMAGE already exists."
+                    echo "should_build=false" >> "$GITHUB_OUTPUT"
+                  else
+                    echo "$IMAGE does not exist."
+                    echo "should_build=true" >> "$GITHUB_OUTPUT"
+                  fi
+
+    build:
+        needs: check-new-release
+
+        if: needs.check-new-release.outputs.should_build == 'true'
+
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@v4
+
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@v3
+
+            - name: Log in to GHCR
+              uses: docker/login-action@v3
+              with:
+                  registry: ghcr.io
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Build and publish image
+              uses: docker/build-push-action@v6
+              with:
+                  context: .
+                  push: true
+
+                  build-args: |
+                      SERVER_URL=${{ needs.check-new-release.outputs.asset_url }}
+                      VERSION=${{ needs.check-new-release.outputs.release_tag }}
+
+                  tags: |
+                      ${{ env.IMAGE_NAME }}:${{ needs.check-new-release.outputs.release_tag }}
+                      ${{ env.IMAGE_NAME }}:latest
+
+                  cache-from: type=gha
+                  cache-to: type=gha,mode=max
+
+            - name: Job summary
+              run: |
+                  {
+                    echo "## Balatro Multiplayer Server"
+                    echo ""
+                    echo "Upstream version: \`${{ needs.check-new-release.outputs.release_tag }}\`"
+                    echo "Image: \`${{ env.IMAGE_NAME }}:${{ needs.check-new-release.outputs.release_tag }}\`"
+                    echo "Latest: \`${{ env.IMAGE_NAME }}:latest\`"
+                  } >> "$GITHUB_STEP_SUMMARY"
