@@ -2,19 +2,7 @@
 
 Docker image for the Balatro Multiplayer private server.
 
-The image is built from the official Linux server binary published by the Balatro Multiplayer project.
-
-## Image
-
-```text
-ghcr.io/tanakrit-d/balatro-multiplayer-server:latest
-```
-
-Versioned tags are also published, for example:
-
-```text
-ghcr.io/tanakrit-d/balatro-multiplayer-server:v0.5.5
-```
+The server is built from the [BalatroMultiplayerAPI-Server](https://github.com/Balatro-Multiplayer/BalatroMultiplayerAPI-Server) source rather than the prebuilt standalone server binary.
 
 ## Docker Compose
 
@@ -27,54 +15,56 @@ services:
 
     ports:
       - "8788:8788/tcp"
+
+    volumes:
+      - ./data:/app/data
 ```
 
-Start the server with:
+Start the server:
 
 ```bash
 docker compose up -d
 ```
 
-View logs with:
+View logs:
 
 ```bash
 docker compose logs -f
 ```
 
-## Client configuration
+## Client
 
-Configure Balatro Multiplayer to connect to the Docker host on port `8788`.
+Configure Balatro Multiplayer to connect to the Docker host on TCP port `8788`.
 
-Example:
-
-```lua
-return {
-    ["server_url"] = "192.168.1.10",
-    ["server_port"] = 8788,
-}
-```
-
-Use the Docker host's LAN IP, hostname, or Tailscale address as appropriate.
+Use the host's LAN IP, hostname, or Tailscale address.
 
 ## Updates
 
-GitHub Actions checks the upstream Balatro Multiplayer releases on a schedule.
+GitHub Actions checks the upstream server repository daily.
 
-When a new server release is published, the workflow builds and pushes:
+When the upstream commit changes, a new image is built and published as:
 
 ```text
-:<version>
-:latest
+ghcr.io/tanakrit-d/balatro-multiplayer-server:latest
+ghcr.io/tanakrit-d/balatro-multiplayer-server:sha-<commit>
 ```
 
-Existing versions are not rebuilt unless the workflow is manually run with the force option enabled.
+Changes to the local Dockerfile or build workflow also trigger a rebuild.
 
-## Upstream
+## Data
 
-Balatro Multiplayer:
+Persistent server data is stored under:
 
-https://github.com/Balatro-Multiplayer/BalatroMultiplayer
+```text
+/app/data
+```
 
-Private server documentation:
+Mount this directory to persistent storage to retain the server database between container recreations.
 
-https://balatromp.com/docs/advanced/private-server
+## Ports
+
+| Port | Protocol | Purpose |
+| --- | --- | --- |
+| 8788 | TCP | Multiplayer server |
+
+The server also starts an internal administration service on `127.0.0.1:8789`. It is not exposed by this image.
